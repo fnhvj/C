@@ -32,7 +32,7 @@ class ZhiPuChat:
 
     OUTPUT_NODE = True
 
-    CATEGORY = "Utils|WX"
+    CATEGORY = "utils"
 
     def zhipuchat(self, question,api_key,model):
         if question=="" or api_key=="":

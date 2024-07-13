@@ -8,6 +8,11 @@ import numpy as np
 import locale
 from datetime import datetime
 from pathlib import Path
+import base64
+import torch
+from torch import Tensor
+from io import BytesIO
+from PIL import Image, ImageOps, ImageSequence
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'comfy'))
 original_locale = locale.setlocale(locale.LC_TIME, '')
@@ -25,9 +30,9 @@ class WxSaveImageExtended:
         return {
             'required': {
                 'filename_prefix': ('STRING', {'default': 'ComfyUI_[time(%Y-%m-%d)]'}),
-                'filename_keys': ('STRING', {'default': 'model_name, vae_name, seed, steps, cfg', 'multiline': False}),
+                'filename_keys': ('STRING', {'default': 'ckpt_name, vae_name, seed, steps, cfg', 'multiline': False}),
                 'foldername_prefix': ('STRING', {'default': '[time(%Y-%m-%d)]'}),
-                'foldername_keys': ('STRING', {'default': 'model_name, sampler_name, scheduler', 'multiline': False}),
+                'foldername_keys': ('STRING', {'default': '', 'multiline': False}),
                 'delimiter': (['underscore','dot', 'comma'], {'default': 'underscore'}),
                 'save_job_data': (['disabled', 'prompt', 'basic, prompt', 'basic, sampler, prompt', 'basic, models, sampler, prompt'],{'default': 'disabled'}),
                 'job_data_per_image': (['disabled', 'enabled'],{'default': 'disabled'}),
@@ -36,7 +41,7 @@ class WxSaveImageExtended:
                 'counter_digits': ([2, 3, 4, 5, 6], {'default': 3}),
                 'counter_position': (['first', 'last'], {'default': 'last'}),
                 'one_counter_per_folder': (['disabled', 'enabled'], {'default': 'enabled'}),
-                'image_preview': (['disabled', 'enabled'], {'default': 'enabled'}),
+                'image_preview': (['disabled', 'enabled'], {'default': 'disabled'}),
             },
             "optional": {
                     'images': ('IMAGE', ),
@@ -51,7 +56,7 @@ class WxSaveImageExtended:
     RETURN_NAMES = ()
     FUNCTION = 'save_images'
     OUTPUT_NODE = True
-    CATEGORY = "Utils|WX"
+    CATEGORY = "image"
 
     def get_subfolder_path(self, image_path, output_path):
         image_path = Path(image_path).resolve()
@@ -98,7 +103,7 @@ class WxSaveImageExtended:
         except:
             print(f"{string} is worng format!!")
         new_string = re.sub(r'[\/:*?"<>|]','_',new_string)
-        print(new_string)
+        # print(new_string)
         return new_string
             
     @staticmethod
@@ -136,12 +141,12 @@ class WxSaveImageExtended:
                     if value.endswith('.safetensors'):
                         value = WxSaveImageExtended.remove_file_extension(value)
                     if value != 'None':
-                        loras_string += f'{value}, '
+                        loras_string += f'{WxSaveImageExtended.cover_string(value)}, '
 
             if key in target_keys:
                 if (isinstance(value, str) and value.endswith('.safetensors')) or (isinstance(value, str) and value.endswith('.pt')):
                     value = WxSaveImageExtended.remove_file_extension(value)
-                found_values[key] = value
+                found_values[key] = WxSaveImageExtended.cover_string(value)
 
             if isinstance(value, dict):
                 WxSaveImageExtended.find_parameter_values(target_keys, value, found_values)
@@ -297,7 +302,7 @@ class WxSaveImageExtended:
                 ):
 
         delimiter_char = "_" if delimiter =='underscore' else '.' if delimiter =='dot' else ','
-        print(pipe)
+        # print(pipe)
         images = images if isinstance(images, list) and len(images) > 0 else (pipe.get("images") if pipe else images)
         
         # Get set resolution value
@@ -309,15 +314,15 @@ class WxSaveImageExtended:
         foldername_keys_to_extract = [item.strip() for item in foldername_keys.split(',')]
         custom_filename = WxSaveImageExtended.generate_custom_name(filename_keys_to_extract, filename_prefix, delimiter_char, resolution, prompt)
         custom_foldername = WxSaveImageExtended.generate_custom_name(foldername_keys_to_extract, foldername_prefix, delimiter_char, resolution, prompt)
-        print(custom_foldername)
-        print(custom_filename)
+        # print(custom_foldername)
+        # print(custom_filename)
         # Create and save images
         try:
             full_output_folder, filename, _, _, custom_filename = folder_paths.get_save_image_path(custom_filename, self.output_dir, images[0].shape[1], images[0].shape[0])
-            print(custom_filename)
+            # print(custom_filename)
             custom_foldername=self.cover_string(custom_foldername)
             output_path = os.path.join(full_output_folder, custom_foldername)
-            print(custom_filename,output_path)
+            # print(custom_filename,output_path)
             os.makedirs(output_path, exist_ok=True)
             counter = self.get_latest_counter(one_counter_per_folder, output_path, filename, counter_digits, counter_position)
 
@@ -333,15 +338,17 @@ class WxSaveImageExtended:
                     if extra_pnginfo is not None:
                         for x in extra_pnginfo:
                             metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+                    parameters  = f"""{positive_text_opt}\nNegative prompt: {negative_text_opt}\nSteps: 35, Sampler: DPM++ 2M SDE Karras, CFG scale: 7, Seed: 3492429390, Size: {resolution}, Model hash: b1b7c8b1b7, Model: mixLuoaV5_, Denoising strength: 0.3, Clip skip: 2, Hires prompt: , Hires upscale: 2, Hires upscaler: 4x-UltraSharp, Lora hashes: "tifa lockhart: c482841449ee", Eta: 0.67, Version: ## 1.4.1"""
+                    metadata.add_text('parameters',parameters)
 
                 if counter_position == 'last':
                     file = f'{filename}{delimiter_char}{counter:0{counter_digits}}.png'
                 else:
                     file = f'{counter:0{counter_digits}}{delimiter_char}{filename}.png'
-                print(file)
+                # print(file)
                 file = self.cover_string(file)
                 image_path = os.path.join(output_path, file)
-                print(file,image_path)
+                # print(file,image_path)
                 img.save(image_path, pnginfo=metadata, compress_level=4)
 
                 if save_job_data != 'disabled' and job_data_per_image =='enabled':
@@ -361,10 +368,319 @@ class WxSaveImageExtended:
                 results = list()
             return { 'ui': { 'images': results } }
 
+
+class ImageLoadFromBase64:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "base64_string": ("STRING", {}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "MASK")
+    # RETURN_NAMES = ("any")
+
+    FUNCTION = "main"
+
+    # OUTPUT_NODE = False
+
+    CATEGORY = "image_io_helpers"
+
+    def main(self, base64_string: str):
+        # Remove the base64 prefix (e.g., "data:image/png;base64,")
+        if (base64_string.startswith("data:image/")):
+            _, base64_string = base64_string.split(",", 1)
+        decoded_bytes = base64.b64decode(base64_string)
+        file_like_object = BytesIO(decoded_bytes)
+        img = Image.open(file_like_object)
+
+        output_images = []
+        output_masks = []
+        for i in ImageSequence.Iterator(img):
+            i = ImageOps.exif_transpose(i)
+            image = i.convert("RGB")
+            image = np.array(image).astype(np.float32) / 255.0
+            image = torch.from_numpy(image)[None,]
+            if 'A' in i.getbands():
+                mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
+                mask = 1. - torch.from_numpy(mask)
+            else:
+                mask = torch.zeros((64, 64), dtype=torch.float32, device="cpu")
+            output_images.append(image)
+            output_masks.append(mask.unsqueeze(0))
+
+        if len(output_images) > 1:
+            output_image = torch.cat(output_images, dim=0)
+            output_mask = torch.cat(output_masks, dim=0)
+        else:
+            output_image = output_images[0]
+            output_mask = output_masks[0]
+
+        return (output_image, output_mask)
+
+
+class ImageLoadByPath:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "file_path": ("STRING", {}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "MASK")
+    # RETURN_NAMES = ("any")
+
+    FUNCTION = "main"
+
+    # OUTPUT_NODE = False
+
+    CATEGORY = "image_io_helpers"
+
+    def main(self, file_path: str):
+        img = Image.open(file_path)
+        output_images = []
+        output_masks = []
+        for i in ImageSequence.Iterator(img):
+            i = ImageOps.exif_transpose(i)
+            image = i.convert("RGB")
+            image = np.array(image).astype(np.float32) / 255.0
+            image = torch.from_numpy(image)[None,]
+            if 'A' in i.getbands():
+                mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
+                mask = 1. - torch.from_numpy(mask)
+            else:
+                mask = torch.zeros((64, 64), dtype=torch.float32, device="cpu")
+            output_images.append(image)
+            output_masks.append(mask.unsqueeze(0))
+
+        if len(output_images) > 1:
+            output_image = torch.cat(output_images, dim=0)
+            output_mask = torch.cat(output_masks, dim=0)
+        else:
+            output_image = output_images[0]
+            output_mask = output_masks[0]
+
+        return (output_image, output_mask)
+
+
+class ImageLoadAsMaskByPath:
+    _color_channels = ["alpha", "red", "green", "blue"]
+
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "file_path": ("STRING", {}),
+                "channel": (cls._color_channels,)
+            }
+        }
+
+    RETURN_TYPES = ("MASK",)
+    # RETURN_NAMES = ("any")
+
+    FUNCTION = "main"
+
+    # OUTPUT_NODE = False
+
+    CATEGORY = "image_io_helpers"
+
+    def main(self, file_path: str, channel):
+        i = Image.open(file_path)
+        i = ImageOps.exif_transpose(i)
+        if i.getbands() != ("R", "G", "B", "A"):
+            i = i.convert("RGBA")
+        mask = None
+        c = channel[0].upper()
+        if c in i.getbands():
+            mask = np.array(i.getchannel(c)).astype(np.float32) / 255.0
+            mask = torch.from_numpy(mask)
+            if c == 'A':
+                mask = 1. - mask
+        else:
+            mask = torch.zeros((64, 64), dtype=torch.float32, device="cpu")
+        return (mask.unsqueeze(0),)
+
+
+class ImageSaveToPath:
+    def __init__(self):
+        self.type = "output"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE", {}),
+                "folder_path": ("STRING", {}),
+                "filename_prefix": ("STRING", {
+                    "default": "ComfyUI"
+                }),
+                "save_prompt": ("BOOLEAN", {
+                    "default": True,
+                }),
+                "save_extra_pnginfo": ("BOOLEAN", {
+                    "default": True,
+                }),
+                "compress_level": ("INT", {
+                    "default": 4,
+                    "min": 0,
+                    "max": 9,
+                    "step": 1
+                })
+            },
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO"
+            },
+        }
+
+    RETURN_TYPES = ()
+
+    FUNCTION = "main"
+
+    OUTPUT_NODE = True
+
+    CATEGORY = "image_io_helpers"
+
+    def main(
+            self,
+            images: Tensor,
+            folder_path: str,
+            file_name: str,
+            prompt=None,
+            save_prompt=True,
+            extra_pnginfo=None,
+            save_extra_pnginfo=True,
+            compress_level=4):
+        file_paths = []
+        with os.scandir(folder_path) as entries:
+            for entry in entries:
+                if entry.is_file():
+                    file_paths.append(entry.path)
+        png_paths = filter(lambda x: x.endswith(".png"), file_paths)
+        counter = 0
+        results = list()
+        for image in images:
+            i = 255. * image.cpu().numpy()
+            img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+            metadata = None
+            if not args.disable_metadata:
+                metadata = PngInfo()
+                if save_prompt and prompt is not None:
+                    metadata.add_text("prompt", json.dumps(prompt))
+                if save_extra_pnginfo and extra_pnginfo is not None:
+                    for x in extra_pnginfo:
+                        metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+
+            file = f"{file_name}_{counter:05}.png"
+            full_file_path = os.path.join(folder_path, file)
+
+            while (full_file_path in png_paths):
+                counter += 1
+                file = f"{file_name}_{counter:05}.png"
+                full_file_path = os.path.join(folder_path, file)
+
+            img.save(full_file_path, pnginfo=metadata, compress_level=compress_level)
+            results.append({
+                "filename": file,
+                "folder": folder_path,
+                "full_path": full_file_path,
+                "type": self.type
+            })
+            counter += 1
+
+        return {"ui": {"images": results}}
+
+
+class ImageSaveAsBase64:
+    def __init__(self):
+        self.type = "output"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE", {}),
+                "save_prompt": ("BOOLEAN", {
+                    "default": True,
+                }),
+                "save_extra_pnginfo": ("BOOLEAN", {
+                    "default": True,
+                }),
+            },
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO"
+            },
+        }
+
+    RETURN_TYPES = ()
+
+    FUNCTION = "main"
+
+    OUTPUT_NODE = True
+
+    CATEGORY = "image_io_helpers"
+
+    def main(
+            self,
+            images: Tensor,
+            save_prompt=True,
+            save_extra_pnginfo=True,
+            prompt=None,
+            extra_pnginfo=None):
+
+        results = list()
+        for image in images:
+            i = 255. * image.cpu().numpy()
+            img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+            metadata = None
+            if not args.disable_metadata:
+                metadata = PngInfo()
+                if save_prompt and prompt is not None:
+                    metadata.add_text("prompt", json.dumps(prompt))
+                if save_extra_pnginfo and extra_pnginfo is not None:
+                    for x in extra_pnginfo:
+                        metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+
+            # Create a BytesIO object to simulate a file-like object
+            image_stream = BytesIO()
+
+            # Save the image to the BytesIO stream
+            img.save(image_stream, pnginfo=metadata, format="PNG")
+
+            # Get raw bytes from the buffer
+            image_bytes = image_stream.getvalue()
+
+            # Encode the BytesIO stream content to base64
+            base64_string = "data:image/png;base64," + base64.b64encode(image_bytes).decode(
+                "utf-8")  # Decode for text representation
+
+            results.append({
+                "base64_string": base64_string,
+            })
+
+        return {"ui": {"images": results}}
+
 NODE_CLASS_MAPPINGS = {
     'WxSaveImageExtended': WxSaveImageExtended,
+    'ImageLoadFromBase64(ImageIOHelpers)': ImageLoadFromBase64,
+    'ImageLoadByPath(ImageIOHelpers)': ImageLoadByPath,
+    'ImageLoadAsMaskByPath(ImageIOHelpers)': ImageLoadAsMaskByPath,
+    'ImageSaveToPath(ImageIOHelpers)': ImageSaveToPath,
+    'ImageSaveAsBase64(ImageIOHelpers)': ImageSaveAsBase64,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    'WxSaveImageExtended': 'wx|图片保存',
+    'WxSaveImageExtended': 'wx|图像保存到',
 }
